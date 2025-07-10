@@ -1,0 +1,21 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+build/
+xcuserdata/
+*.xcscmblueprint
+
+# macOS
+.DS_Store
+
+# User data
+*.moved-aside
+*.xcuserstate
+
+# IDE
+.idea/
+*.iml 
