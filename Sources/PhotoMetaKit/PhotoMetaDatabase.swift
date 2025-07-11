@@ -14,6 +14,7 @@ class PhotoMetaDatabase {
     private init() {
         // 前資料儲存於 Documents 目錄
         let dbPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
+        print("資料庫路徑：\(dbPath)/photometakit.sqlite3")
         db = try! Connection("\(dbPath)/photometakit.sqlite3")
         createTableIfNeeded()
     }
