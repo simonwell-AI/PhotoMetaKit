@@ -27,7 +27,7 @@ class PhotoMetaDatabase {
         do {
             try db.run(userPhotos.create(ifNotExists: true) { t in
                 t.column(id, primaryKey: .autoincrement)
-                t.column(filePath)
+                t.column(filePath, unique: true) // 加上 unique
                 t.column(metadata)
                 t.column(embedding)
                 t.column(uploadTimestamp, defaultValue: Date())
@@ -39,17 +39,43 @@ class PhotoMetaDatabase {
         }
     }
     
+    /// 將 metadata 轉換為 JSON 兼容格式（遞迴將 Date 轉為 String）
+    private func convertToJSONCompatible(_ object: Any) -> Any {
+        if let dict = object as? [String: Any] {
+            var result: [String: Any] = [:]
+            for (key, value) in dict {
+                result[key] = convertToJSONCompatible(value)
+            }
+            return result
+        } else if let array = object as? [Any] {
+            return array.map { convertToJSONCompatible($0) }
+        } else if let date = object as? Date {
+            let formatter = ISO8601DateFormatter()
+            return formatter.string(from: date)
+        } else if let number = object as? NSNumber {
+            return number
+        } else if let string = object as? String {
+            return string
+        } else {
+            return String(describing: object)
+        }
+    }
+    
     // 插入照片記錄
-    func insertPhoto(filePath: String, metadata: String) -> Int64? {
+    func insertPhoto(filePath: String, metadata: [String: Any]) {
+        // 先查詢是否已存在
+        if photoExists(filePath: filePath) {
+            print("本地已存在相同 filePath，不重複插入")
+            return
+        }
         do {
-            let insert = userPhotos.insert(
-                self.filePath <- filePath,
-                self.metadata <- metadata
-            )
-            return try db.run(insert)
+            let jsonCompatibleMetadata = convertToJSONCompatible(metadata)
+            let jsonData = try JSONSerialization.data(withJSONObject: jsonCompatibleMetadata)
+            let jsonString = String(data: jsonData, encoding: .utf8)!
+            let insert = userPhotos.insert(self.filePath <- filePath, self.metadata <- jsonString)
+            try db.run(insert)
         } catch {
-            print("插入照片失敗: \(error)")
-            return nil
+            print("寫入資料庫失敗: \(error)")
         }
     }
     

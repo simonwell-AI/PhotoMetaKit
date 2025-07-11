@@ -2,10 +2,17 @@ import Foundation
 import UIKit
 import ImageIO
 import SQLite
+import Supabase
 
 public class PhotoMetaKitManager {
     public static let shared = PhotoMetaKitManager()
-    private init() {}
+    public let supabase: SupabaseClient
+
+    private init() {
+        let supabaseURL = URL(string: "https://sqgdfeiqqnxrzxpaexzh.supabase.co")!
+        let supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNxZ2RmZWlxcW54cnp4cGFleHpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIyMjQ1NDAsImV4cCI6MjA2NzgwMDU0MH0.QWpRX5tYRQM3ph8ph04z7nSNqAM3dJ_rsOitTEdYrqw"
+        self.supabase = SupabaseClient(supabaseURL: supabaseURL, supabaseKey: supabaseKey)
+    }
     
     // MARK: - 處理圖片
     
@@ -65,13 +72,12 @@ public class PhotoMetaKitManager {
             return false
         }
         
-        // 將 metadata 轉換為 JSON 字串
+        // 將 metadata 轉換為 JSON 字串（但 insertPhoto 需傳原始字典）
         guard let metadataString = convertMetadataToString(metadata) else {
             print("無法轉換 metadata 為字串: \(url.path)")
             return false
         }
-        
-        let result = PhotoMetaDatabase.shared.insertPhoto(filePath: url.path, metadata: metadataString)
+        let result = PhotoMetaDatabase.shared.insertPhoto(filePath: url.path, metadata: metadata)
         if result != nil {
             print("成功處理照片: \(url.path)")
             return true
@@ -153,6 +159,27 @@ public class PhotoMetaKitManager {
     @discardableResult
     public func deleteAllPhotos() -> Bool {
         return PhotoMetaDatabase.shared.clearAllPhotos()
+    }
+    
+    /// 將本地所有 user_photos 上傳到 Supabase
+    public func uploadAllPhotosToSupabase(completion: @escaping (Bool, Error?) -> Void) {
+        let allPhotos = PhotoMetaDatabase.shared.getAllPhotos()
+        let supabasePhotos: [SupabasePhoto] = allPhotos.map { photo in
+            SupabasePhoto(
+                filepath: photo.filePath,
+                metadata: photo.metadata
+                // embedding: ...
+            )
+        }
+        let table = supabase.database.from("user_photos")
+        Task {
+            do {
+                let _ = try await table.upsert(supabasePhotos, onConflict: "filepath").execute()
+                completion(true, nil)
+            } catch {
+                completion(false, error)
+            }
+        }
     }
     
     // MARK: - 私有方法
@@ -272,4 +299,11 @@ public extension PhotoMetaKitManager {
         
         return (make, model)
     }
+}
+
+/// 上傳用 struct
+private struct SupabasePhoto: Encodable {
+    let filepath: String
+    let metadata: String
+    // let embedding: String? // 如有需要可加
 }
