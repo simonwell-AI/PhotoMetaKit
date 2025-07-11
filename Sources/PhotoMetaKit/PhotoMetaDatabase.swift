@@ -5,13 +5,14 @@ class PhotoMetaDatabase {
     static let shared = PhotoMetaDatabase()
     private let db: Connection
     
+    // 表格定义
     private let photos = Table("photos")
-    private let id = Expression<Int64>("id")
-    private let filePath = Expression<String>("filePath")
-    private let metadata = Expression<String>("metadata")
+    private let id = SQLite.Expression<Int64>("id")
+    private let filePath = SQLite.Expression<String>("filePath")
+    private let metadata = SQLite.Expression<String>("metadata")
     
     private init() {
-        // 將資料庫存於 Documents 目錄
+        // 前資料儲存於 Documents 目錄
         let dbPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
         db = try! Connection("\(dbPath)/photometakit.sqlite3")
         createTableIfNeeded()
@@ -25,145 +26,126 @@ class PhotoMetaDatabase {
                 t.column(metadata)
             })
         } catch {
-            print("建立資料表失敗: \(error)")
+            print("創建表格失敗: \(error)")
         }
     }
     
-    func insertPhoto(filePath: String, metadata: [String: Any]) {
+    // 插入照片記錄
+    func insertPhoto(filePath: String, metadata: String) -> Int64? {
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: metadata)
-            let jsonString = String(data: jsonData, encoding: .utf8)!
-            let insert = photos.insert(self.filePath <- filePath, self.metadata <- jsonString)
-            try db.run(insert)
+            let insert = photos.insert(
+                self.filePath <- filePath,
+                self.metadata <- metadata
+            )
+            return try db.run(insert)
         } catch {
-            print("寫入資料庫失敗: \(error)")
+            print("插入照片失敗: \(error)")
+            return nil
         }
     }
     
-    // MARK: - 查詢功能
-    
-    /// 取得所有照片的 metadata
-    func getAllPhotos() -> [(id: Int64, filePath: String, metadata: String)] {
-        var results: [(Int64, String, String)] = []
+    // 查詢照片記錄
+    func getPhoto(byId photoId: Int64) -> (filePath: String, metadata: String)? {
         do {
-            for photo in try db.prepare(photos) {
-                let pid: Int64 = photo[id]
-                let path: String = photo[filePath]
-                let meta: String = photo[metadata]
-                results.append((pid, path, meta))
-            }
-        } catch {
-            print("查詢所有照片失敗: \(error)")
-        }
-        return results
-    }
-    
-    /// 根據檔案路徑取得特定照片的 metadata
-    func getPhotoMetadata(by path: String) -> String? {
-        do {
-            let query = photos.filter(self.filePath == path)
-            if let photo = try db.pluck(query) {
-                return photo[metadata]
-            }
-        } catch {
-            print("查詢特定照片失敗: \(error)")
-        }
-        return nil
-    }
-    
-    /// 根據 ID 取得照片資訊
-    func getPhoto(by photoId: Int64) -> (filePath: String, metadata: String)? {
-        do {
-            let query = photos.filter(self.id == photoId)
+            let query = photos.filter(id == photoId)
             if let photo = try db.pluck(query) {
                 return (photo[filePath], photo[metadata])
             }
         } catch {
-            print("根據 ID 查詢照片失敗: \(error)")
+            print("查詢照片失敗: \(error)")
         }
         return nil
     }
     
-    /// 檢查照片是否已存在於資料庫中
-    func photoExists(filePath: String) -> Bool {
+    // 根據文件路徑查詢
+    func getPhoto(byFilePath path: String) -> (id: Int64, metadata: String)? {
         do {
-            let query = photos.filter(self.filePath == filePath)
-            return try db.pluck(query) != nil
-        } catch {
-            print("檢查照片是否存在失敗: \(error)")
-            return false
-        }
-    }
-    
-    /// 取得資料庫中照片的總數
-    func getPhotoCount() -> Int {
-        do {
-            return try db.scalar(photos.count)
-        } catch {
-            print("取得照片總數失敗: \(error)")
-            return 0
-        }
-    }
-    
-    /// 根據檔案路徑模糊搜尋照片
-    func searchPhotos(by pathKeyword: String) -> [(id: Int64, filePath: String, metadata: String)] {
-        var results: [(Int64, String, String)] = []
-        do {
-            let query = photos.filter(self.filePath.like("%\(pathKeyword)%"))
-            for photo in try db.prepare(query) {
-                results.append((photo[id], photo[filePath], photo[metadata]))
+            let query = photos.filter(filePath == path)
+            if let photo = try db.pluck(query) {
+                return (photo[id], photo[metadata])
             }
         } catch {
-            print("搜尋照片失敗: \(error)")
+            print("查詢照片失敗: \(error)")
         }
-        return results
+        return nil
     }
     
-    /// 刪除特定照片記錄
-    func deletePhoto(by photoId: Int64) -> Bool {
+    // 更新照片記錄 - 修正版本
+    func updatePhoto(photoId: Int64, newFilePath: String? = nil, newMetadata: String? = nil) -> Bool {
         do {
-            let query = photos.filter(self.id == photoId)
-            let deleted = try db.run(query.delete())
-            return deleted > 0
+            let photoToUpdate = photos.filter(id == photoId)
+            var updates: [Setter] = []
+            
+            if let newFilePath = newFilePath {
+                updates.append(filePath <- newFilePath)
+            }
+            if let newMetadata = newMetadata {
+                updates.append(metadata <- newMetadata)
+            }
+            
+            if !updates.isEmpty {
+                let updateCount = try db.run(photoToUpdate.update(updates))
+                return updateCount > 0
+            }
+        } catch {
+            print("更新照片失敗: \(error)")
+        }
+        return false
+    }
+    
+    // 刪除照片記錄
+    func deletePhoto(photoId: Int64) -> Bool {
+        do {
+            let photoToDelete = photos.filter(id == photoId)
+            let deleteCount = try db.run(photoToDelete.delete())
+            return deleteCount > 0
         } catch {
             print("刪除照片失敗: \(error)")
             return false
         }
     }
     
-    /// 根據檔案路徑刪除照片記錄
-    func deletePhoto(by path: String) -> Bool {
+    // 獲取所有照片記錄
+    func getAllPhotos() -> [(id: Int64, filePath: String, metadata: String)] {
+        var results: [(id: Int64, filePath: String, metadata: String)] = []
         do {
-            let query = photos.filter(self.filePath == path)
-            let deleted = try db.run(query.delete())
-            return deleted > 0
+            for photo in try db.prepare(photos) {
+                results.append((photo[id], photo[filePath], photo[metadata]))
+            }
         } catch {
-            print("根據路徑刪除照片失敗: \(error)")
+            print("獲取所有照片失敗: \(error)")
+        }
+        return results
+    }
+    
+    // 清空所有記錄
+    func clearAllPhotos() -> Bool {
+        do {
+            let deleteCount = try db.run(photos.delete())
+            return deleteCount >= 0
+        } catch {
+            print("清空照片記錄失敗: \(error)")
             return false
         }
     }
     
-    /// 清空所有照片記錄
-    func deleteAllPhotos() -> Bool {
+    // 獲取照片總數
+    func getPhotoCount() -> Int {
         do {
-            let deleted = try db.run(photos.delete())
-            return deleted > 0
+            return try db.scalar(photos.count)
         } catch {
-            print("清空所有照片失敗: \(error)")
-            return false
+            print("獲取照片總數失敗: \(error)")
+            return 0
         }
     }
     
-    /// 更新照片的 metadata
-    func updatePhotoMetadata(photoId: Int64, newMetadata: [String: Any]) -> Bool {
+    // 檢查照片是否存在
+    func photoExists(filePath: String) -> Bool {
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: newMetadata)
-            let jsonString = String(data: jsonData, encoding: .utf8)!
-            let query = photos.filter(self.id == photoId)
-            let updated = try db.run(query.update(self.metadata <- jsonString))
-            return updated > 0
+            let query = photos.filter(self.filePath == filePath)
+            return try db.pluck(query) != nil
         } catch {
-            print("更新照片 metadata 失敗: \(error)")
+            print("檢查照片是否存在失敗: \(error)")
             return false
         }
     }

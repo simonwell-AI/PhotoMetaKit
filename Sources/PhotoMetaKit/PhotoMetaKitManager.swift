@@ -65,9 +65,20 @@ public class PhotoMetaKitManager {
             return false
         }
         
-        PhotoMetaDatabase.shared.insertPhoto(filePath: url.path, metadata: metadata)
-        print("成功處理照片: \(url.path)")
-        return true
+        // 將 metadata 轉換為 JSON 字串
+        guard let metadataString = convertMetadataToString(metadata) else {
+            print("無法轉換 metadata 為字串: \(url.path)")
+            return false
+        }
+        
+        let result = PhotoMetaDatabase.shared.insertPhoto(filePath: url.path, metadata: metadataString)
+        if result != nil {
+            print("成功處理照片: \(url.path)")
+            return true
+        } else {
+            print("插入資料庫失敗: \(url.path)")
+            return false
+        }
     }
     
     /// 批次處理多張圖片
@@ -100,16 +111,21 @@ public class PhotoMetaKitManager {
     
     /// 根據檔案路徑取得照片的 metadata
     public func getPhotoMetadata(filePath: String) -> [String: Any]? {
-        guard let metadataString = PhotoMetaDatabase.shared.getPhotoMetadata(by: filePath) else {
+        guard let photo = PhotoMetaDatabase.shared.getPhoto(byFilePath: filePath) else {
             return nil
         }
-        return parseMetadataString(metadataString)
+        return parseMetadataString(photo.metadata)
     }
     
-    /// 搜尋照片
+    /// 搜尋照片 (簡單的檔案名稱搜尋)
     public func searchPhotos(by keyword: String) -> [(id: Int64, filePath: String, metadata: [String: Any])] {
-        let photos = PhotoMetaDatabase.shared.searchPhotos(by: keyword)
-        return photos.compactMap { photo in
+        let allPhotos = PhotoMetaDatabase.shared.getAllPhotos()
+        let filteredPhotos = allPhotos.filter { photo in
+            let fileName = (photo.filePath as NSString).lastPathComponent
+            return fileName.lowercased().contains(keyword.lowercased())
+        }
+        
+        return filteredPhotos.compactMap { photo in
             if let metadataDict = parseMetadataString(photo.metadata) {
                 return (photo.id, photo.filePath, metadataDict)
             }
@@ -125,13 +141,18 @@ public class PhotoMetaKitManager {
     /// 刪除照片記錄
     @discardableResult
     public func deletePhoto(filePath: String) -> Bool {
-        return PhotoMetaDatabase.shared.deletePhoto(by: filePath)
+        // 先根據檔案路徑找到 ID
+        guard let photo = PhotoMetaDatabase.shared.getPhoto(byFilePath: filePath) else {
+            print("找不到照片記錄: \(filePath)")
+            return false
+        }
+        return PhotoMetaDatabase.shared.deletePhoto(photoId: photo.id)
     }
     
     /// 清空所有照片記錄
     @discardableResult
     public func deleteAllPhotos() -> Bool {
-        return PhotoMetaDatabase.shared.deleteAllPhotos()
+        return PhotoMetaDatabase.shared.clearAllPhotos()
     }
     
     // MARK: - 私有方法
@@ -162,6 +183,44 @@ public class PhotoMetaKitManager {
     private func isSupportedImageFormat(url: URL) -> Bool {
         let supportedExtensions = ["jpg", "jpeg", "png", "heic", "heif", "tiff", "tif", "gif", "bmp"]
         return supportedExtensions.contains(url.pathExtension.lowercased())
+    }
+    
+    /// 將 metadata 字典轉換為 JSON 字串
+    private func convertMetadataToString(_ metadata: [String: Any]) -> String? {
+        // 需要處理非 JSON 兼容的類型
+        let jsonCompatibleMetadata = convertToJSONCompatible(metadata)
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: jsonCompatibleMetadata, options: [.prettyPrinted])
+            return String(data: jsonData, encoding: .utf8)
+        } catch {
+            print("轉換 metadata 為 JSON 失敗: \(error)")
+            return nil
+        }
+    }
+    
+    /// 將 metadata 轉換為 JSON 兼容格式
+    private func convertToJSONCompatible(_ object: Any) -> Any {
+        if let dict = object as? [String: Any] {
+            var result: [String: Any] = [:]
+            for (key, value) in dict {
+                result[key] = convertToJSONCompatible(value)
+            }
+            return result
+        } else if let array = object as? [Any] {
+            return array.map { convertToJSONCompatible($0) }
+        } else if let date = object as? Date {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            return formatter.string(from: date)
+        } else if let number = object as? NSNumber {
+            return number
+        } else if let string = object as? String {
+            return string
+        } else {
+            // 對於其他類型，轉換為字串
+            return String(describing: object)
+        }
     }
     
     /// 將 JSON 字串轉換為字典
